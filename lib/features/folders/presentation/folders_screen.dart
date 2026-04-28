@@ -1,15 +1,4 @@
 // lib/features/folders/presentation/folders_screen.dart
-//
-// Pantalla de carpetas virtuales de One Piece TCG.
-// Se accede desde CollectionScreen con Navigator.push.
-//
-// Funcionalidades:
-// - Listar carpetas con contador de cartas
-// - Crear carpeta (nombre + descripción opcional)
-// - Editar nombre/descripción
-// - Eliminar carpeta
-// - Entrar a una carpeta y ver sus cartas con cantidades
-// - Editar cantidad o eliminar una carta de la carpeta
 
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -17,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:one_piece_card_scanner/app/app.dart';
 import '../../../core/database/card_database.dart';
 import '../../../core/widgets/card_image_widget.dart';
+import '../../collection/presentation/collection_screen.dart'
+    show GroupedCard, GroupedCardDetailSheet, FolderCardSummary;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Pantalla principal — lista de carpetas
@@ -53,6 +44,7 @@ class _FoldersScreenState extends State<FoldersScreen> {
   Future<void> _showCreateDialog({Folder? existing}) async {
     final nameCtrl = TextEditingController(text: existing?.name ?? '');
     final descCtrl = TextEditingController(text: existing?.description ?? '');
+    bool isPublic = existing?.isPublic ?? false;
     String? error;
 
     await showDialog(
@@ -83,6 +75,19 @@ class _FoldersScreenState extends State<FoldersScreen> {
                   hintText: 'Ej: Cartas del set Romance Dawn',
                 ),
               ),
+              const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Carpeta pública'),
+                subtitle: Text(
+                  isPublic
+                      ? 'Visible para otros usuarios'
+                      : 'Solo tú puedes verla',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                value: isPublic,
+                onChanged: (v) => setDialogState(() => isPublic = v),
+              ),
             ],
           ),
           actions: [
@@ -97,14 +102,13 @@ class _FoldersScreenState extends State<FoldersScreen> {
                   setDialogState(() => error = 'El nombre es obligatorio');
                   return;
                 }
-
                 Navigator.pop(ctx);
-
                 if (existing == null) {
                   await CardDatabase.instance.createFolder(
                     Folder(
                       name: name,
                       description: descCtrl.text.trim(),
+                      isPublic: isPublic,
                     ),
                   );
                 } else {
@@ -112,10 +116,10 @@ class _FoldersScreenState extends State<FoldersScreen> {
                     existing.copyWith(
                       name: name,
                       description: descCtrl.text.trim(),
+                      isPublic: isPublic,
                     ),
                   );
                 }
-
                 AppEvents.notifyFoldersChanged();
                 _load();
               },
@@ -168,25 +172,25 @@ class _FoldersScreenState extends State<FoldersScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _folders.isEmpty
-              ? _EmptyFolders(onCreate: () => _showCreateDialog())
-              : ListView.builder(
-                  padding: const EdgeInsets.all(12),
-                  itemCount: _folders.length,
-                  itemBuilder: (_, i) => _FolderTile(
-                    folder: _folders[i],
-                    onTap: () async {
-                      await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => FolderDetailScreen(folder: _folders[i]),
-                        ),
-                      );
-                      _load();
-                    },
-                    onEdit: () => _showCreateDialog(existing: _folders[i]),
-                    onDelete: () => _deleteFolder(_folders[i]),
-                  ),
-                ),
+          ? _EmptyFolders(onCreate: () => _showCreateDialog())
+          : ListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: _folders.length,
+              itemBuilder: (_, i) => _FolderTile(
+                folder: _folders[i],
+                onTap: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => FolderDetailScreen(folder: _folders[i]),
+                    ),
+                  );
+                  _load();
+                },
+                onEdit: () => _showCreateDialog(existing: _folders[i]),
+                onDelete: () => _deleteFolder(_folders[i]),
+              ),
+            ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showCreateDialog(),
         icon: const Icon(Icons.create_new_folder_outlined),
@@ -232,11 +236,30 @@ class _FolderTile extends StatelessWidget {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              folder.totalCards == 1
-                  ? '1 carta'
-                  : '${folder.totalCards} cartas',
-              style: TextStyle(color: cs.primary, fontWeight: FontWeight.w500),
+            Row(
+              children: [
+                Text(
+                  folder.totalCards == 1
+                      ? '1 carta'
+                      : '${folder.totalCards} cartas',
+                  style: TextStyle(
+                    color: cs.primary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                if (folder.isPublic) ...[
+                  const SizedBox(width: 8),
+                  Icon(Icons.public, size: 13, color: Colors.green.shade600),
+                  const SizedBox(width: 2),
+                  Text(
+                    'Pública',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.green.shade600,
+                    ),
+                  ),
+                ],
+              ],
             ),
             if (folder.description.isNotEmpty)
               Text(
@@ -255,7 +278,6 @@ class _FolderTile extends StatelessWidget {
           itemBuilder: (_) {
             final isProtected = folder.id == CardDatabase.collectionFolderId;
             return [
-              // Editar solo disponible para carpetas no protegidas
               if (!isProtected)
                 const PopupMenuItem(
                   value: 'edit',
@@ -265,24 +287,27 @@ class _FolderTile extends StatelessWidget {
                     dense: true,
                   ),
                 ),
-              // Eliminar solo disponible para carpetas no protegidas
               if (!isProtected)
                 const PopupMenuItem(
                   value: 'delete',
                   child: ListTile(
                     leading: Icon(Icons.delete_outline, color: Colors.red),
-                    title: Text('Eliminar', style: TextStyle(color: Colors.red)),
+                    title: Text(
+                      'Eliminar',
+                      style: TextStyle(color: Colors.red),
+                    ),
                     dense: true,
                   ),
                 ),
-              // Carpeta protegida: solo info
               if (isProtected)
                 const PopupMenuItem(
                   enabled: false,
                   child: ListTile(
                     leading: Icon(Icons.lock_outline, color: Colors.grey),
-                    title: Text('Carpeta protegida',
-                        style: TextStyle(color: Colors.grey)),
+                    title: Text(
+                      'Carpeta protegida',
+                      style: TextStyle(color: Colors.grey),
+                    ),
                     dense: true,
                   ),
                 ),
@@ -336,7 +361,7 @@ class _EmptyFolders extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Pantalla de detalle de carpeta — lista de cartas con cantidades
+// Pantalla de detalle de carpeta
 // ═══════════════════════════════════════════════════════════════════════════════
 
 class FolderDetailScreen extends StatefulWidget {
@@ -372,6 +397,64 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
   }
 
   int get _totalCards => _entries.fold(0, (sum, e) => sum + e.quantity);
+
+  /// Abre el bottom sheet de detalle igual al de CollectionScreen
+  Future<void> _showCardDetail(FolderCardEntry entry) async {
+    // Construye el GroupedCard con las copias de esta carta
+    final allCards = await CardDatabase.instance.getAllCards();
+    final sameCopies = allCards.where((c) {
+      final norm = RegExp(r'_p\d+\$');
+      return c.setCode.replaceAll(norm, '') ==
+          entry.card.setCode.replaceAll(norm, '');
+    }).toList();
+    final group = GroupedCard(
+      setCode: entry.card.setCode,
+      cards: sameCopies.isEmpty ? [entry.card] : sameCopies,
+    );
+
+    // Construye el resumen de carpetas para esta carta
+    final allFolders = await CardDatabase.instance.getAllFolders();
+    final List<FolderCardSummary> folderSummary = [];
+    for (final folder in allFolders) {
+      final items = await CardDatabase.instance.getCardsInFolder(folder.id!);
+      final matches = items.where((e) {
+        final norm = RegExp(r'_p\d+\$');
+        return e.card.setCode.replaceAll(norm, '') ==
+            entry.card.setCode.replaceAll(norm, '');
+      }).toList();
+      if (matches.isNotEmpty) {
+        final total = matches.fold(0, (s, e) => s + e.quantity);
+        folderSummary.add(FolderCardSummary(folder: folder, quantity: total));
+      }
+    }
+
+    if (!mounted) return;
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => GroupedCardDetailSheet(
+        group: group,
+        folderSummary: folderSummary,
+        allFolders: allFolders,
+        onOpenFolder: (folder) {
+          Navigator.pop(context);
+          // Si la carpeta destino es diferente a la actual, navega a ella
+          if (folder.id != widget.folder.id) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (_) => FolderDetailScreen(folder: folder),
+              ),
+            );
+          }
+        },
+      ),
+    );
+
+    // Recarga por si agregó/movió cartas desde el sheet
+    _load();
+  }
 
   Future<void> _editQuantity(FolderCardEntry entry) async {
     final ctrl = TextEditingController(text: '${entry.quantity}');
@@ -473,7 +556,6 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
 
     if (action == 'one') {
       final newQty = entry.quantity - 1;
-
       if (newQty <= 0) {
         final db = await CardDatabase.instance.database;
         await db.delete(
@@ -481,10 +563,8 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
           where: 'folder_id = ? AND card_id = ?',
           whereArgs: [widget.folder.id!, entry.card.id!],
         );
-
-        final remaining = await CardDatabase.instance.getFolderQuantitiesForCard(
-          entry.card.id!,
-        );
+        final remaining = await CardDatabase.instance
+            .getFolderQuantitiesForCard(entry.card.id!);
         if (remaining.isEmpty) {
           await CardDatabase.instance.deleteCard(
             entry.card.id!,
@@ -498,7 +578,6 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
           quantity: newQty,
         );
       }
-
       AppEvents.notifyCollectionChanged();
       _load();
     } else if (action == 'custom') {
@@ -510,7 +589,6 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
         where: 'folder_id = ? AND card_id = ?',
         whereArgs: [widget.folder.id!, entry.card.id!],
       );
-
       final remaining = await CardDatabase.instance.getFolderQuantitiesForCard(
         entry.card.id!,
       );
@@ -520,7 +598,6 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
           entry.card.localImagePath,
         );
       }
-
       AppEvents.notifyCollectionChanged();
       _load();
     }
@@ -586,12 +663,13 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
       ),
     );
 
-    if (confirmed != true || entry.card.id == null || widget.folder.id == null) {
+    if (confirmed != true ||
+        entry.card.id == null ||
+        widget.folder.id == null) {
       return;
     }
 
     final newQty = entry.quantity - qty;
-
     if (newQty <= 0) {
       final db = await CardDatabase.instance.database;
       await db.delete(
@@ -599,7 +677,6 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
         where: 'folder_id = ? AND card_id = ?',
         whereArgs: [widget.folder.id!, entry.card.id!],
       );
-
       final remaining = await CardDatabase.instance.getFolderQuantitiesForCard(
         entry.card.id!,
       );
@@ -648,33 +725,34 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _entries.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.inbox_outlined,
-                        size: 64,
-                        color: Colors.grey.shade400,
-                      ),
-                      const SizedBox(height: 12),
-                      const Text(
-                        'Esta carpeta está vacía.\nEscanea cartas y agrégalas desde el Scanner.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.grey),
-                      ),
-                    ],
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.inbox_outlined,
+                    size: 64,
+                    color: Colors.grey.shade400,
                   ),
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.all(12),
-                  itemCount: _entries.length,
-                  itemBuilder: (_, i) => _FolderCardTile(
-                    entry: _entries[i],
-                    onEditQuantity: () => _editQuantity(_entries[i]),
-                    onRemove: () => _removeCard(_entries[i]),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Esta carpeta está vacía.\nEscanea cartas y agrégalas desde el Scanner.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey),
                   ),
-                ),
+                ],
+              ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: _entries.length,
+              itemBuilder: (_, i) => _FolderCardTile(
+                entry: _entries[i],
+                onTap: () => _showCardDetail(_entries[i]),
+                onEditQuantity: () => _editQuantity(_entries[i]),
+                onRemove: () => _removeCard(_entries[i]),
+              ),
+            ),
     );
   }
 }
@@ -684,11 +762,13 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
 class _FolderCardTile extends StatelessWidget {
   const _FolderCardTile({
     required this.entry,
+    required this.onTap,
     required this.onEditQuantity,
     required this.onRemove,
   });
 
   final FolderCardEntry entry;
+  final VoidCallback onTap;
   final VoidCallback onEditQuantity;
   final VoidCallback onRemove;
 
@@ -701,6 +781,7 @@ class _FolderCardTile extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
+        onTap: onTap, // ← abre el detalle
         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         leading: ClipRRect(
           borderRadius: BorderRadius.circular(6),
@@ -710,15 +791,15 @@ class _FolderCardTile extends StatelessWidget {
             child: card.serverImageUrl != null
                 ? CardThumbnail(imageUrl: card.serverImageUrl)
                 : localFile.existsSync()
-                    ? Image.file(localFile, fit: BoxFit.cover)
-                    : const ColoredBox(
-                        color: Colors.grey,
-                        child: Icon(
-                          Icons.image_not_supported,
-                          color: Colors.white,
-                          size: 20,
-                        ),
-                      ),
+                ? Image.file(localFile, fit: BoxFit.cover)
+                : const ColoredBox(
+                    color: Colors.grey,
+                    child: Icon(
+                      Icons.image_not_supported,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
           ),
         ),
         title: Text(

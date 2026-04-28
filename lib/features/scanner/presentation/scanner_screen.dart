@@ -292,54 +292,76 @@ class _ScannerScreenState extends State<ScannerScreen>
   }
 
   Future<void> _saveToCollection() async {
-    final card  = _selectedCard;
+    final card = _effectiveCard ?? _selectedCard ?? _lookupResult?.card;
     final image = _capturedImage;
     if (card == null || image == null || _quantity <= 0) return;
 
     setState(() {
-      _isSaving       = true;
+      _isSaving = true;
       _successMessage = null;
-      _errorMessage   = null;
+      _errorMessage = null;
     });
 
     try {
-      // Busca si ya existe este código en scanned_cards para no duplicar
+      // Busca si ya existe este código para no duplicar
       final allCards = await CardDatabase.instance.getAllCards();
       ScannedCard? existing;
       for (final c in allCards) {
-        if (c.setCode == card.id) { existing = c; break; }
+        if (c.setCode == card.id) {
+          existing = c;
+          break;
+        }
       }
 
       final int cardDbId;
+
       if (existing != null) {
         cardDbId = existing.id!;
+
+        // ── OPTIMIZACIÓN: si ya tenía URL del servidor guardada antes
+        //    pero la imagen local sigue existiendo, la borramos ahora.
+        if (existing.hasServerImage) {
+          await CardDatabase.instance.deleteLocalImageSafely(
+            existing.localImagePath,
+          );
+        }
       } else {
+        // Carta nueva: guarda imagen local temporalmente
         final permanentPath = await CardDatabase.persistImage(image.path);
+
         final saved = await CardDatabase.instance.insertCard(
           ScannedCard(
-            name:           card.cleanName,
-            cardClass:      card.cardType,
-            faction:        card.faction ?? '',
-            setCode:        card.id,
-            ability:        card.effect ?? '',
-            trigger:        card.trigger ?? '',
+            name: card.cleanName,
+            cardClass: card.cardType,
+            faction: card.faction ?? '',
+            setCode: card.id,
+            ability: card.effect ?? '',
+            trigger: card.trigger ?? '',
             localImagePath: permanentPath,
-            serverImageUrl: card.imageUrl,
+            serverImageUrl: card.imageUrl, // puede ser null
           ),
         );
         cardDbId = saved.id!;
+
+        // ── OPTIMIZACIÓN: si el servidor ya devolvió la URL en este escaneo,
+        //    borramos la imagen local inmediatamente (no la necesitamos).
+        if (card.imageUrl != null && card.imageUrl!.isNotEmpty) {
+          await CardDatabase.instance.updateServerUrl(
+            cardDbId,
+            card.imageUrl!,
+            deleteLocalImage: true, // borra el archivo local
+          );
+        }
       }
 
-      // Determina la carpeta destino:
-      // si el usuario eligió una → esa; si no → siempre va a Colección
       await CardDatabase.instance.database; // asegura inicialización
-      final targetFolderId = _selectedFolder?.id
-          ?? CardDatabase.collectionFolderId;
+      final targetFolderId =
+          _selectedFolder?.id ?? CardDatabase.collectionFolderId;
 
       if (targetFolderId != null) {
         await CardDatabase.instance.addCardToFolder(
           folderId: targetFolderId,
-          cardId:   cardDbId,
+          cardId: cardDbId,
           quantity: _quantity,
         );
       }
@@ -347,7 +369,7 @@ class _ScannerScreenState extends State<ScannerScreen>
       AppEvents.notifyCollectionChanged();
       if (!mounted) return;
 
-      final qty        = _quantity;
+      final qty = _quantity;
       final folderName = _selectedFolder?.name ?? 'Colección';
       setState(() {
         _successMessage = 'x$qty ${card.cleanName} → $folderName';
