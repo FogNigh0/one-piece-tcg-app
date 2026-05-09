@@ -2,8 +2,11 @@
 
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'package:one_piece_card_scanner/app/app.dart';
+import '../../../core/services/sync_service.dart';
 import '../../../core/database/card_database.dart';
 import '../../../core/widgets/card_image_widget.dart';
 import '../../collection/presentation/collection_screen.dart'
@@ -104,21 +107,22 @@ class _FoldersScreenState extends State<FoldersScreen> {
                 }
                 Navigator.pop(ctx);
                 if (existing == null) {
-                  await CardDatabase.instance.createFolder(
+                  final newFolder = await CardDatabase.instance.createFolder(
                     Folder(
                       name: name,
                       description: descCtrl.text.trim(),
                       isPublic: isPublic,
                     ),
                   );
+                  // Sube la carpeta nueva al servidor en background
+                  SyncService().uploadFolder(newFolder);
                 } else {
-                  await CardDatabase.instance.updateFolder(
-                    existing.copyWith(
-                      name: name,
-                      description: descCtrl.text.trim(),
-                      isPublic: isPublic,
-                    ),
+                  final updated = existing.copyWith(
+                    name: name,
+                    description: descCtrl.text.trim(),
+                    isPublic: isPublic,
                   );
+                  await CardDatabase.instance.updateFolder(updated);
                 }
                 AppEvents.notifyFoldersChanged();
                 _load();
@@ -274,6 +278,7 @@ class _FolderTile extends StatelessWidget {
           onSelected: (v) {
             if (v == 'edit') onEdit();
             if (v == 'delete') onDelete();
+            if (v == 'share') _shareFolder(context);
           },
           itemBuilder: (_) {
             final isProtected = folder.id == CardDatabase.collectionFolderId;
@@ -284,6 +289,27 @@ class _FolderTile extends StatelessWidget {
                   child: ListTile(
                     leading: Icon(Icons.edit_outlined),
                     title: Text('Editar'),
+                    dense: true,
+                  ),
+                ),
+              // Compartir solo si es pública y tiene share_token
+              if (folder.isPublic)
+                const PopupMenuItem(
+                  value: 'share',
+                  child: ListTile(
+                    leading: Icon(Icons.share_outlined, color: Colors.green),
+                    title: Text('Compartir link',
+                        style: TextStyle(color: Colors.green)),
+                    dense: true,
+                  ),
+                ),
+              if (!folder.isPublic && !isProtected)
+                const PopupMenuItem(
+                  enabled: false,
+                  child: ListTile(
+                    leading: Icon(Icons.share_outlined, color: Colors.grey),
+                    title: Text('Hacer pública para compartir',
+                        style: TextStyle(color: Colors.grey, fontSize: 12)),
                     dense: true,
                   ),
                 ),
@@ -316,6 +342,20 @@ class _FolderTile extends StatelessWidget {
         ),
         onTap: onTap,
       ),
+    );
+  }
+
+  void _shareFolder(BuildContext context) {
+    if (!folder.isPublic) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('La carpeta debe ser pública para compartir')),
+      );
+      return;
+    }
+    final link = 'opcardscanner://folder/${folder.id}';
+    Share.share(
+      'Mira mi colección One Piece TCG:\n$link',
+      subject: 'Carpeta: ${folder.name}',
     );
   }
 }
@@ -579,6 +619,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
         );
       }
       AppEvents.notifyCollectionChanged();
+      SyncService().uploadCollection();
       _load();
     } else if (action == 'custom') {
       await _removeCustomQuantity(entry);
@@ -599,6 +640,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
         );
       }
       AppEvents.notifyCollectionChanged();
+      SyncService().uploadCollection();
       _load();
     }
   }
@@ -695,6 +737,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     }
 
     AppEvents.notifyCollectionChanged();
+      SyncService().uploadCollection();
     _load();
   }
 
@@ -866,4 +909,5 @@ class _FolderCardTile extends StatelessWidget {
       ),
     );
   }
+
 }

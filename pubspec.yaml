@@ -20,6 +20,11 @@ dependencies:
   http: ^1.2.2
   # Para guardar imagen en galería/disco
   image_picker: ^1.1.2
+  #Secure storege
+  flutter_secure_storage: ^9.2.2 
+  #Compartir carpetas
+  share_plus: ^10.0.0        # para compartir el link
+  app_links: ^6.0.0          # para recibir deep links
 
 dev_dependencies:
   flutter_test:

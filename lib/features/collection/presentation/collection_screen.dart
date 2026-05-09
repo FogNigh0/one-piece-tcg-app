@@ -2,6 +2,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../../app/app.dart';
+import '../../../core/services/sync_service.dart';
 import '../../../core/database/card_database.dart';
 import '../../../core/widgets/card_image_widget.dart';
 import '../../folders/presentation/folders_screen.dart';
@@ -55,7 +56,22 @@ class _CollectionScreenState extends State<CollectionScreen> {
   Future<void> _load() async {
     setState(() => _loading = true);
     final cards = await CardDatabase.instance.getAllCards();
-    final grouped = _groupCards(cards);
+
+    // ── FIX #1: calcular cantidad total en carpetas por setCode ──
+    final folderTotals = <String, int>{};
+    final folders = await CardDatabase.instance.getAllFolders();
+    for (final folder in folders) {
+      final items = await CardDatabase.instance.getCardsInFolder(folder.id!);
+      for (final item in items) {
+        folderTotals.update(
+          item.card.setCode,
+          (v) => v + item.quantity,
+          ifAbsent: () => item.quantity,
+        );
+      }
+    }
+
+    final grouped = _groupCards(cards, folderTotals);
     if (!mounted) return;
     setState(() {
       _all = cards;
@@ -66,7 +82,8 @@ class _CollectionScreenState extends State<CollectionScreen> {
   }
 
   /// Agrupa por setCode EXACTO — OP14-091 y OP14-091_p1 quedan separados.
-  List<GroupedCard> _groupCards(List<ScannedCard> cards) {
+  List<GroupedCard> _groupCards(
+      List<ScannedCard> cards, Map<String, int> folderTotals) {
     final map = <String, List<ScannedCard>>{};
     for (final card in cards) {
       map.putIfAbsent(card.setCode, () => []).add(card);
@@ -74,7 +91,11 @@ class _CollectionScreenState extends State<CollectionScreen> {
     final groups = map.entries.map((entry) {
       final items = entry.value
         ..sort((a, b) => b.scannedAt.compareTo(a.scannedAt));
-      return GroupedCard(setCode: entry.key, cards: items);
+      return GroupedCard(
+        setCode: entry.key,
+        cards: items,
+        folderTotalQty: folderTotals[entry.key] ?? 0,
+      );
     }).toList();
     groups.sort((a, b) => b.latestScannedAt.compareTo(a.latestScannedAt));
     return groups;
@@ -170,7 +191,6 @@ class _CollectionScreenState extends State<CollectionScreen> {
     final result = <FolderCardSummary>[];
     for (final folder in folders) {
       final items = await CardDatabase.instance.getCardsInFolder(folder.id!);
-      // Comparación exacta de setCode
       final matches = items
           .where((item) => item.card.setCode == group.setCode)
           .toList();
@@ -246,6 +266,7 @@ class _CollectionScreenState extends State<CollectionScreen> {
     if (target.id == null) return;
     await CardDatabase.instance.deleteCard(target.id!, target.localImagePath);
     AppEvents.notifyCollectionChanged();
+      SyncService().uploadCollection();
   }
 
   Future<void> _deleteAllCopies(GroupedCard group) async {
@@ -255,6 +276,7 @@ class _CollectionScreenState extends State<CollectionScreen> {
       }
     }
     AppEvents.notifyCollectionChanged();
+      SyncService().uploadCollection();
   }
 
   Future<void> _deleteFromSpecificFolder(
@@ -297,6 +319,7 @@ class _CollectionScreenState extends State<CollectionScreen> {
       imagePath: target.card.localImagePath,
     );
     AppEvents.notifyCollectionChanged();
+      SyncService().uploadCollection();
   }
 
   Future<void> _showDetail(GroupedCard group) async {
@@ -519,14 +542,24 @@ class _CollectionScreenState extends State<CollectionScreen> {
 // ─── Modelos de UI ────────────────────────────────────────────────────────────
 
 class GroupedCard {
-  GroupedCard({required this.setCode, required this.cards});
+  GroupedCard({
+    required this.setCode,
+    required this.cards,
+    this.folderTotalQty = 0,
+  });
   final String setCode;
   final List<ScannedCard> cards;
 
+  /// Suma de cantidades en TODAS las carpetas para este setCode.
+  /// Si es 0 (nunca asignado a carpeta), se usa totalCopies como fallback.
+  final int folderTotalQty;
+
   ScannedCard get representative => cards.first;
 
-  /// Cantidad de filas en scanned_cards para este setCode exacto.
   int get totalCopies => cards.length;
+
+  /// Lo que se muestra en el badge de la lista.
+  int get displayQty => folderTotalQty > 0 ? folderTotalQty : totalCopies;
 
   DateTime get latestScannedAt => cards.first.scannedAt;
 }
@@ -588,7 +621,7 @@ class GroupedCollectionTile extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            // FIX #3: muestra totalCopies (cantidad real de filas escaneadas)
+            // FIX #1: muestra suma real de carpetas (no solo filas escaneadas)
             Container(
               padding:
                   const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -597,7 +630,7 @@ class GroupedCollectionTile extends StatelessWidget {
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
-                'x${group.totalCopies}',
+                'x${group.displayQty}',
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onPrimaryContainer,
                   fontSize: 12,
@@ -669,12 +702,54 @@ class _GroupedCardDetailSheetState extends State<GroupedCardDetailSheet> {
   bool _saving = false;
   String? _feedback;
 
+  // FIX #2: copia mutable del folderSummary que se actualiza en tiempo real
+  late List<FolderCardSummary> _folderSummary;
+  late List<Folder> _allFolders;
+
   @override
   void initState() {
     super.initState();
-    if (widget.allFolders.isNotEmpty) {
-      _targetFolder = widget.allFolders.first;
+    _folderSummary = List.from(widget.folderSummary);
+    _allFolders = List.from(widget.allFolders);
+    if (_allFolders.isNotEmpty) {
+      _targetFolder = _allFolders.first;
     }
+    AppEvents.collectionVersion.addListener(_reloadSummary);
+  }
+
+  @override
+  void dispose() {
+    AppEvents.collectionVersion.removeListener(_reloadSummary);
+    super.dispose();
+  }
+
+  /// Se llama automáticamente cada vez que cambia la colección.
+  Future<void> _reloadSummary() async {
+    final folders = await CardDatabase.instance.getAllFolders();
+    final result = <FolderCardSummary>[];
+    for (final folder in folders) {
+      final items = await CardDatabase.instance.getCardsInFolder(folder.id!);
+      final matches = items
+          .where((item) => item.card.setCode == widget.group.setCode)
+          .toList();
+      if (matches.isNotEmpty) {
+        final total = matches.fold(0, (sum, e) => sum + e.quantity);
+        result.add(FolderCardSummary(folder: folder, quantity: total));
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _folderSummary = result;
+      _allFolders = folders;
+      // Mantener la carpeta destino si sigue existiendo
+      if (_targetFolder != null) {
+        _targetFolder = folders.cast<Folder?>()
+            .firstWhere((f) => f?.id == _targetFolder!.id, orElse: () => null)
+            ?? (folders.isNotEmpty ? folders.first : null);
+      } else if (folders.isNotEmpty) {
+        _targetFolder = folders.first;
+      }
+    });
   }
 
   Future<void> _addToFolder() async {
@@ -694,6 +769,7 @@ class _GroupedCardDetailSheetState extends State<GroupedCardDetailSheet> {
       quantity: _qty,
     );
     AppEvents.notifyCollectionChanged();
+      SyncService().uploadCollection();
     if (!mounted) return;
     setState(() {
       _saving = false;
@@ -755,14 +831,13 @@ class _GroupedCardDetailSheetState extends State<GroupedCardDetailSheet> {
             Text(card.setCode,
                 style: const TextStyle(color: Colors.grey)),
             const SizedBox(height: 8),
-            // FIX #1: solo muestra "En carpetas" (quitado "Copias escaneadas")
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
                 InfoChip(
                   label: 'En carpetas',
-                  value: widget.folderSummary
+                  value: _folderSummary
                       .fold(0, (sum, e) => sum + e.quantity)
                       .toString(),
                 ),
@@ -786,17 +861,19 @@ class _GroupedCardDetailSheetState extends State<GroupedCardDetailSheet> {
               Text(card.trigger),
               const SizedBox(height: 14),
             ],
-            // FIX #2: sección "Mover entre carpetas" restaurada
-            if (widget.folderSummary.isNotEmpty && widget.allFolders.length >= 1) ...[
+            // FIX #2: usa _folderSummary reactivo en lugar de widget.folderSummary
+            if (_folderSummary.isNotEmpty && _allFolders.length >= 1) ...[
               const Text(
                 'Mover entre carpetas',
                 style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
               ),
               const SizedBox(height: 8),
+              // Key con longitud del summary para forzar recreación si cambia
               _MoveCardSection(
+                key: ValueKey('move_${_folderSummary.length}_${_folderSummary.fold(0, (s, e) => s + e.quantity)}'),
                 group: widget.group,
-                folderSummary: widget.folderSummary,
-                allFolders: widget.allFolders,
+                folderSummary: _folderSummary,
+                allFolders: _allFolders,
               ),
               const Divider(height: 24),
             ],
@@ -805,7 +882,7 @@ class _GroupedCardDetailSheetState extends State<GroupedCardDetailSheet> {
               style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
             ),
             const SizedBox(height: 8),
-            if (widget.allFolders.isEmpty)
+            if (_allFolders.isEmpty)
               const Text('No tienes carpetas creadas todavía.',
                   style: TextStyle(color: Colors.grey))
             else ...[
@@ -816,7 +893,7 @@ class _GroupedCardDetailSheetState extends State<GroupedCardDetailSheet> {
                     context: context,
                     builder: (ctx) => SimpleDialog(
                       title: const Text('Elegir carpeta'),
-                      children: widget.allFolders
+                      children: _allFolders
                           .map(
                             (f) => SimpleDialogOption(
                               onPressed: () => Navigator.pop(ctx, f),
@@ -939,11 +1016,11 @@ class _GroupedCardDetailSheetState extends State<GroupedCardDetailSheet> {
                 style:
                     TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
             const SizedBox(height: 8),
-            if (widget.folderSummary.isEmpty)
+            if (_folderSummary.isEmpty)
               const Text('Esta carta no está en ninguna carpeta.',
                   style: TextStyle(color: Colors.grey))
             else
-              ...widget.folderSummary.map(
+              ..._folderSummary.map(
                 (item) => Card(
                   margin: const EdgeInsets.only(bottom: 8),
                   child: ListTile(
@@ -984,6 +1061,7 @@ class _GroupedCardDetailSheetState extends State<GroupedCardDetailSheet> {
 
 class _MoveCardSection extends StatefulWidget {
   const _MoveCardSection({
+    super.key,
     required this.group,
     required this.folderSummary,
     required this.allFolders,
@@ -1007,17 +1085,53 @@ class _MoveCardSectionState extends State<_MoveCardSection> {
   @override
   void initState() {
     super.initState();
-    _fromFolder = widget.folderSummary.first;
-    // Destino por defecto: primera carpeta distinta al origen
+    _initFolders();
+  }
+
+  void _initFolders() {
+    if (widget.folderSummary.isNotEmpty) {
+      _fromFolder = widget.folderSummary.first;
+    }
     _toFolder = widget.allFolders.firstWhere(
       (f) => f.id != _fromFolder?.folder.id,
       orElse: () => widget.allFolders.first,
     );
+    if (_qty > (_fromFolder?.quantity ?? 1)) {
+      _qty = _fromFolder?.quantity ?? 1;
+    }
+  }
+
+  // FIX #2: cuando el padre pasa un nuevo folderSummary, sincronizar estado
+  @override
+  void didUpdateWidget(_MoveCardSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.folderSummary != widget.folderSummary) {
+      setState(() {
+        // Intentar conservar la carpeta origen si sigue existiendo
+        final updatedFrom = widget.folderSummary.cast<FolderCardSummary?>()
+            .firstWhere(
+              (s) => s?.folder.id == _fromFolder?.folder.id,
+              orElse: () => null,
+            );
+        _fromFolder = updatedFrom ?? 
+            (widget.folderSummary.isNotEmpty ? widget.folderSummary.first : null);
+        // Ajustar cantidad si supera lo disponible
+        final maxQ = _fromFolder?.quantity ?? 1;
+        if (_qty > maxQ) _qty = maxQ.clamp(1, maxQ);
+        // Actualizar destino si ya no existe
+        final toExists = widget.allFolders.any((f) => f.id == _toFolder?.id);
+        if (!toExists && widget.allFolders.isNotEmpty) {
+          _toFolder = widget.allFolders.firstWhere(
+            (f) => f.id != _fromFolder?.folder.id,
+            orElse: () => widget.allFolders.first,
+          );
+        }
+      });
+    }
   }
 
   int get _maxQty => _fromFolder?.quantity ?? 1;
 
-  /// Recarga desde DB la cantidad real disponible en la carpeta origen.
   Future<int> _getRealQtyInOrigin() async {
     if (_fromFolder == null) return 0;
     final items = await CardDatabase.instance
@@ -1039,7 +1153,6 @@ class _MoveCardSectionState extends State<_MoveCardSection> {
       _feedback = null;
     });
 
-    // Leer cantidad REAL desde DB (no la del widget que puede estar desactualizada)
     final folderItems = await CardDatabase.instance
         .getCardsInFolder(_fromFolder!.folder.id!);
     final matches = folderItems
@@ -1062,7 +1175,6 @@ class _MoveCardSectionState extends State<_MoveCardSection> {
       return;
     }
 
-    // Ajustar _qty por si el usuario pide mover más de lo que queda realmente
     final realAvailable = entry.quantity;
     final qtyToMove = _qty.clamp(1, realAvailable);
     final newQty = realAvailable - qtyToMove;
@@ -1087,22 +1199,13 @@ class _MoveCardSectionState extends State<_MoveCardSection> {
     );
 
     AppEvents.notifyCollectionChanged();
-    if (!mounted) return;
-
-    // Recargar cantidad real desde DB para actualizar _fromFolder y _maxQty
-    final realQtyAfter = await _getRealQtyInOrigin();
+      SyncService().uploadCollection();
     if (!mounted) return;
 
     setState(() {
       _moving = false;
-      _feedback = 'x$qtyToMove movida${qtyToMove > 1 ? 's' : ''} a ${_toFolder!.name} [OK]';
-      // Actualizar cantidad local para que _maxQty refleje el estado real
-      _fromFolder = FolderCardSummary(
-        folder: _fromFolder!.folder,
-        quantity: realQtyAfter,
-      );
-      // Resetear _qty si supera lo que queda
-      _qty = realQtyAfter > 0 ? 1 : 1;
+      _feedback = 'x$qtyToMove movida${qtyToMove > 1 ? 's' : ''} a ${_toFolder!.name}';
+      _qty = 1;
     });
   }
 
@@ -1122,9 +1225,9 @@ class _MoveCardSectionState extends State<_MoveCardSection> {
                   final summary = widget.folderSummary
                       .firstWhere((s) => s.folder.id == f.id);
                   setState(() {
-            _fromFolder = summary;
-            if (_qty > summary.quantity) _qty = summary.quantity;
-          });
+                    _fromFolder = summary;
+                    if (_qty > summary.quantity) _qty = summary.quantity;
+                  });
                 },
               ),
             ),
@@ -1195,7 +1298,7 @@ class _MoveCardSectionState extends State<_MoveCardSection> {
           Text(
             _feedback!,
             style: TextStyle(
-              color: _feedback!.contains('[OK]')
+              color: _feedback!.startsWith('x')
                   ? Colors.green.shade700
                   : Colors.orange.shade700,
               fontWeight: FontWeight.w600,

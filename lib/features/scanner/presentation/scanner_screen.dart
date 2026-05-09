@@ -2,20 +2,25 @@
 import 'dart:async';
 import 'dart:io';
 
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+
 
 import 'package:one_piece_card_scanner/app/app.dart';
 import 'package:one_piece_card_scanner/core/database/card_database.dart';
 import 'package:one_piece_card_scanner/core/services/card_api_service.dart';
 
+
 class ScannerScreen extends StatefulWidget {
   const ScannerScreen({super.key});
+
 
   @override
   State<ScannerScreen> createState() => _ScannerScreenState();
 }
+
 
 class _ScannerScreenState extends State<ScannerScreen>
     with WidgetsBindingObserver {
@@ -23,46 +28,58 @@ class _ScannerScreenState extends State<ScannerScreen>
   Future<void>? _initFuture;
   CameraDescription? _selectedCamera;
 
+
   final _textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
   final _apiService = CardApiService();
+
 
   String? _detectedCode;
   CardLookupResult? _lookupResult;
   CardData? _selectedCard;
   XFile? _capturedImage;
 
+
   bool _isScanning = false;
   bool _isLooking = false;
   bool _isSaving = false;
   bool _liveEnabled = true;
 
+
   String? _errorMessage;
   String? _successMessage;
 
+
   Timer? _liveTimer;
+
 
   int _quantity = 1;
   Folder? _selectedFolder;
   List<Folder> _allFolders = [];
   bool _loadingFolders = false;
 
+
   // FIX: suscripción al stream de cambios de carpetas
   StreamSubscription<void>? _foldersSub;
 
+
   // NUEVO: toggle para arte alternativa
   bool _isAlternateArt = false;
+
 
   // NUEVO: carta efectiva para UI + guardado
   CardData? get _effectiveCard {
     final result = _lookupResult;
     if (result == null) return _selectedCard;
 
+
     if (_isAlternateArt && result.alternateVersions.isNotEmpty) {
       return result.alternateVersions.first;
     }
 
+
     return _selectedCard ?? result.card;
   }
+
 
   @override
   void initState() {
@@ -71,12 +88,14 @@ class _ScannerScreenState extends State<ScannerScreen>
     _setupCamera();
     _loadFoldersForScanner();
 
+
     // FIX: recarga la lista de carpetas automáticamente cuando se crea,
     // edita o elimina una carpeta desde FoldersScreen
     _foldersSub = AppEvents.onFoldersChanged.listen((_) {
       _loadFoldersForScanner();
     });
   }
+
 
   Future<void> _loadFoldersForScanner() async {
     setState(() => _loadingFolders = true);
@@ -94,6 +113,7 @@ class _ScannerScreenState extends State<ScannerScreen>
     });
   }
 
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final c = _cameraController;
@@ -105,6 +125,7 @@ class _ScannerScreenState extends State<ScannerScreen>
       _initCamera(_selectedCamera!);
     }
   }
+
 
   Future<void> _setupCamera() async {
     try {
@@ -122,6 +143,7 @@ class _ScannerScreenState extends State<ScannerScreen>
       setState(() => _errorMessage = 'Error al inicializar cámara: $e');
     }
   }
+
 
   Future<void> _initCamera(CameraDescription camera) async {
     final prev = _cameraController;
@@ -151,6 +173,7 @@ class _ScannerScreenState extends State<ScannerScreen>
     }
   }
 
+
   void _startLive() {
     _liveTimer?.cancel();
     _liveTimer = Timer.periodic(const Duration(milliseconds: 1800), (_) {
@@ -158,10 +181,12 @@ class _ScannerScreenState extends State<ScannerScreen>
     });
   }
 
+
   void _stopLive() {
     _liveTimer?.cancel();
     _liveTimer = null;
   }
+
 
   Future<void> _detectCodeLive() async {
     final c = _cameraController;
@@ -187,6 +212,7 @@ class _ScannerScreenState extends State<ScannerScreen>
       }
     } catch (_) {}
   }
+
 
   Future<void> _lookupAndShow(String code, XFile image) async {
     setState(() {
@@ -221,13 +247,15 @@ class _ScannerScreenState extends State<ScannerScreen>
     }
   }
 
+
   Future<void> _showVariantDialog(CardLookupResult result) async {
     final all = [result.card, ...result.alternateVersions];
     await showDialog<CardData>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: const Text('¿Cuál versión tienes?'),
+        backgroundColor: kSurface,
+        title: const Text('¿Cuál versión tienes?', style: TextStyle(color: Colors.white)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: all
@@ -240,8 +268,10 @@ class _ScannerScreenState extends State<ScannerScreen>
                               ? 'Parallel'
                               : 'Alternate Art')
                         : 'Arte estándar',
+                    style: const TextStyle(color: Colors.white),
                   ),
-                  subtitle: Text(card.rarityLabel),
+                  subtitle: Text(card.rarityLabel,
+                      style: const TextStyle(color: Color(0xFF888888))),
                   onTap: () {
                     // Solo activa/desactiva el toggle según lo que eligió
                     setState(() => _isAlternateArt = card.isAlternate);
@@ -256,6 +286,7 @@ class _ScannerScreenState extends State<ScannerScreen>
     // _selectedCard siempre es result.card (estándar)
     if (mounted) setState(() => _selectedCard = result.card);
   }
+
 
   Widget _rarityBadge(String rarity) {
     Color color;
@@ -291,16 +322,19 @@ class _ScannerScreenState extends State<ScannerScreen>
     );
   }
 
+
   Future<void> _saveToCollection() async {
     final card = _effectiveCard ?? _selectedCard ?? _lookupResult?.card;
     final image = _capturedImage;
     if (card == null || image == null || _quantity <= 0) return;
+
 
     setState(() {
       _isSaving = true;
       _successMessage = null;
       _errorMessage = null;
     });
+
 
     try {
       // Busca si ya existe este código para no duplicar
@@ -313,10 +347,13 @@ class _ScannerScreenState extends State<ScannerScreen>
         }
       }
 
+
       final int cardDbId;
+
 
       if (existing != null) {
         cardDbId = existing.id!;
+
 
         // ── OPTIMIZACIÓN: si ya tenía URL del servidor guardada antes
         //    pero la imagen local sigue existiendo, la borramos ahora.
@@ -328,6 +365,7 @@ class _ScannerScreenState extends State<ScannerScreen>
       } else {
         // Carta nueva: guarda imagen local temporalmente
         final permanentPath = await CardDatabase.persistImage(image.path);
+
 
         final saved = await CardDatabase.instance.insertCard(
           ScannedCard(
@@ -343,6 +381,7 @@ class _ScannerScreenState extends State<ScannerScreen>
         );
         cardDbId = saved.id!;
 
+
         // ── OPTIMIZACIÓN: si el servidor ya devolvió la URL en este escaneo,
         //    borramos la imagen local inmediatamente (no la necesitamos).
         if (card.imageUrl != null && card.imageUrl!.isNotEmpty) {
@@ -354,9 +393,11 @@ class _ScannerScreenState extends State<ScannerScreen>
         }
       }
 
+
       await CardDatabase.instance.database; // asegura inicialización
       final targetFolderId =
           _selectedFolder?.id ?? CardDatabase.collectionFolderId;
+
 
       if (targetFolderId != null) {
         await CardDatabase.instance.addCardToFolder(
@@ -366,8 +407,10 @@ class _ScannerScreenState extends State<ScannerScreen>
         );
       }
 
+
       AppEvents.notifyCollectionChanged();
       if (!mounted) return;
+
 
       final qty = _quantity;
       final folderName = _selectedFolder?.name ?? 'Colección';
@@ -380,6 +423,7 @@ class _ScannerScreenState extends State<ScannerScreen>
       if (mounted) setState(() => _isSaving = false);
     }
   }
+
 
   String? _extractCode(String text) {
     final n = text
@@ -403,6 +447,7 @@ class _ScannerScreenState extends State<ScannerScreen>
     return null;
   }
 
+
   void _resetCardView() {
     setState(() {
       _lookupResult = null;
@@ -416,11 +461,14 @@ class _ScannerScreenState extends State<ScannerScreen>
     });
   }
 
+
   String _costText(CardData card) =>
       card.cost == null ? '' : card.cost.toString();
 
+
   String _attributeText(CardData card) =>
       card.attribute == null ? '' : card.attribute.toString();
+
 
   @override
   void dispose() {
@@ -432,19 +480,20 @@ class _ScannerScreenState extends State<ScannerScreen>
     super.dispose();
   }
 
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F3F2),
+      backgroundColor: kBlack,
       appBar: AppBar(
-        backgroundColor: const Color(0xFFF7F3F2),
+        backgroundColor: kBlack,
         elevation: 0,
         scrolledUnderElevation: 0,
         title: const Text(
           'Scanner',
           style: TextStyle(
-            color: Color(0xFF2B1E1C),
-            fontWeight: FontWeight.w500,
+            color: kGold,
+            fontWeight: FontWeight.w800,
             fontSize: 28,
           ),
         ),
@@ -452,7 +501,7 @@ class _ScannerScreenState extends State<ScannerScreen>
           IconButton(
             onPressed: _resetCardView,
             icon: const Icon(Icons.center_focus_strong_rounded),
-            color: const Color(0xFF5C4341),
+            color: const Color(0xFF888888),
           ),
         ],
       ),
@@ -460,7 +509,7 @@ class _ScannerScreenState extends State<ScannerScreen>
         future: _initFuture,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(child: CircularProgressIndicator(color: kGold));
           }
           final controller = _cameraController;
           if (controller == null || !controller.value.isInitialized) {
@@ -487,13 +536,14 @@ class _ScannerScreenState extends State<ScannerScreen>
     );
   }
 
+
   Widget _buildCameraCard(CameraController controller) {
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(26),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.10),
+            color: Colors.black.withOpacity(0.40),
             blurRadius: 22,
             offset: const Offset(0, 8),
           ),
@@ -568,18 +618,21 @@ class _ScannerScreenState extends State<ScannerScreen>
     );
   }
 
+
   Widget _buildInfoCard(BuildContext context) {
     final card = _effectiveCard ?? _selectedCard ?? _lookupResult?.card;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: const Color(0xFFF9ECEA),
+        color: kSurface,
         borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: kBorder),
       ),
       child: card == null ? _buildEmptyInfo() : _buildCardInfo(context, card),
     );
   }
+
 
   Widget _buildEmptyInfo() => const Column(
     crossAxisAlignment: CrossAxisAlignment.start,
@@ -589,21 +642,23 @@ class _ScannerScreenState extends State<ScannerScreen>
         style: TextStyle(
           fontSize: 24,
           fontWeight: FontWeight.w700,
-          color: Color(0xFF2B1E1C),
+          color: kGold,
         ),
       ),
       SizedBox(height: 10),
       Text(
         'Apunta la cámara al código inferior derecho de la carta.',
-        style: TextStyle(fontSize: 16, height: 1.45, color: Color(0xFF5F5351)),
+        style: TextStyle(fontSize: 16, height: 1.45, color: Color(0xFF888888)),
       ),
     ],
   );
+
 
   Widget _buildCardInfo(BuildContext context, CardData card) {
     final costText = _costText(card);
     final attributeText = _attributeText(card);
     final hasVariants = _lookupResult?.hasVariants ?? false;
+
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -617,7 +672,7 @@ class _ScannerScreenState extends State<ScannerScreen>
                 style: const TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFF241917),
+                  color: Colors.white,
                 ),
               ),
             ),
@@ -626,7 +681,7 @@ class _ScannerScreenState extends State<ScannerScreen>
           ],
         ),
         const SizedBox(height: 12),
-        const Divider(height: 1, color: Color(0xFFE5D4D1)),
+        const Divider(height: 1, color: kBorder),
         const SizedBox(height: 16),
         Wrap(
           spacing: 10,
@@ -647,7 +702,7 @@ class _ScannerScreenState extends State<ScannerScreen>
           style: TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.w700,
-            color: Color(0xFF241917),
+            color: Colors.white,
           ),
         ),
         const SizedBox(height: 8),
@@ -658,7 +713,7 @@ class _ScannerScreenState extends State<ScannerScreen>
           style: const TextStyle(
             fontSize: 16,
             height: 1.45,
-            color: Color(0xFF342927),
+            color: Colors.white70,
           ),
         ),
         const SizedBox(height: 18),
@@ -672,8 +727,8 @@ class _ScannerScreenState extends State<ScannerScreen>
           child: FilledButton.icon(
             onPressed: _isSaving ? null : _saveToCollection,
             style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF2B1E1C),
-              foregroundColor: Colors.white,
+              backgroundColor: kGold,
+              foregroundColor: kBlack,
               padding: const EdgeInsets.symmetric(vertical: 16),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(18),
@@ -685,7 +740,7 @@ class _ScannerScreenState extends State<ScannerScreen>
                     height: 18,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: Colors.white,
+                      color: kBlack,
                     ),
                   )
                 : const Icon(Icons.add_circle_outline),
@@ -701,21 +756,22 @@ class _ScannerScreenState extends State<ScannerScreen>
           const SizedBox(height: 12),
           _feedbackBox(
             _successMessage!,
-            const Color(0xFFE2FFF0),
-            const Color(0xFF18794E),
+            const Color(0xFF0D2A1A),
+            Colors.green,
           ),
         ],
         if (_errorMessage != null) ...[
           const SizedBox(height: 12),
           _feedbackBox(
             _errorMessage!,
-            const Color(0xFFFFE7E3),
-            const Color(0xFFB1392B),
+            const Color(0xFF2A1010),
+            const Color(0xFFEF9A9A),
           ),
         ],
       ],
     );
   }
+
 
   Widget _alternateArtToggle() => InkWell(
     borderRadius: BorderRadius.circular(18),
@@ -725,13 +781,13 @@ class _ScannerScreenState extends State<ScannerScreen>
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       decoration: BoxDecoration(
         color: _isAlternateArt
-            ? const Color(0xFFE9FAF7)
-            : const Color(0xFFFFF7F6),
+            ? kGold.withOpacity(0.10)
+            : kSurface2,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
           color: _isAlternateArt
-              ? const Color(0xFF8CD3CC)
-              : const Color(0xFFE6D2CF),
+              ? kGold.withOpacity(0.6)
+              : kBorder,
           width: _isAlternateArt ? 1.5 : 1,
         ),
       ),
@@ -740,8 +796,8 @@ class _ScannerScreenState extends State<ScannerScreen>
           Icon(
             Icons.auto_awesome,
             color: _isAlternateArt
-                ? const Color(0xFF2D9C93)
-                : const Color(0xFF9E8A87),
+                ? kGold
+                : const Color(0xFF666666),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -754,8 +810,8 @@ class _ScannerScreenState extends State<ScannerScreen>
                     fontSize: 15,
                     fontWeight: FontWeight.w700,
                     color: _isAlternateArt
-                        ? const Color(0xFF1B6B63)
-                        : const Color(0xFF2E2220),
+                        ? kGold
+                        : Colors.white,
                   ),
                 ),
                 Text(
@@ -765,8 +821,8 @@ class _ScannerScreenState extends State<ScannerScreen>
                   style: TextStyle(
                     fontSize: 13,
                     color: _isAlternateArt
-                        ? const Color(0xFF2D9C93)
-                        : const Color(0xFF9E8A87),
+                        ? kGold
+                        : const Color(0xFF666666),
                   ),
                 ),
               ],
@@ -775,39 +831,42 @@ class _ScannerScreenState extends State<ScannerScreen>
           Switch.adaptive(
             value: _isAlternateArt,
             onChanged: (v) => setState(() => _isAlternateArt = v),
-            activeColor: const Color(0xFF2D9C93),
+            activeColor: kGold,
           ),
         ],
       ),
     ),
   );
 
+
   Widget _rarityPill(String rarity) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
     decoration: BoxDecoration(
       borderRadius: BorderRadius.circular(999),
-      border: Border.all(color: const Color(0xFF8CD3CC), width: 1.5),
-      color: const Color(0xFFE9FAF7),
+      border: Border.all(color: kGold.withOpacity(0.6), width: 1.5),
+      color: kGold.withOpacity(0.10),
     ),
     child: Text(
       rarity,
       style: const TextStyle(
-        color: Color(0xFF2D9C93),
+        color: kGold,
         fontWeight: FontWeight.w700,
         fontSize: 16,
       ),
     ),
   );
 
+
   Widget _metaChip(String label, String value) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
     decoration: BoxDecoration(
-      color: const Color(0xFFFFF3F1),
+      color: kSurface2,
       borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: kBorder),
     ),
     child: RichText(
       text: TextSpan(
-        style: const TextStyle(fontSize: 16, color: Color(0xFF2F2422)),
+        style: const TextStyle(fontSize: 16, color: Colors.white),
         children: [
           TextSpan(
             text: '$label: ',
@@ -819,18 +878,21 @@ class _ScannerScreenState extends State<ScannerScreen>
     ),
   );
 
+
   Widget _softLine(String text) => Container(
     width: double.infinity,
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
     decoration: BoxDecoration(
-      color: const Color(0xFFFFF3F1),
+      color: kSurface2,
       borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: kBorder),
     ),
     child: Text(
       text,
-      style: const TextStyle(fontSize: 16, color: Color(0xFF2F2422)),
+      style: const TextStyle(fontSize: 16, color: Colors.white),
     ),
   );
+
 
   Widget _feedbackBox(String text, Color bg, Color fg) => Container(
     width: double.infinity,
@@ -845,6 +907,7 @@ class _ScannerScreenState extends State<ScannerScreen>
     ),
   );
 
+
   Widget _folderSelector(BuildContext context) => InkWell(
     borderRadius: BorderRadius.circular(18),
     onTap: _loadingFolders
@@ -853,7 +916,9 @@ class _ScannerScreenState extends State<ScannerScreen>
             final result = await showDialog<Object>(
               context: context,
               builder: (ctx) => SimpleDialog(
-                title: const Text('Elegir carpeta'),
+                backgroundColor: kSurface,
+                title: const Text('Elegir carpeta',
+                    style: TextStyle(color: Colors.white)),
                 children: [
                   SimpleDialogOption(
                     onPressed: () => Navigator.pop(ctx, 'none'),
@@ -868,15 +933,16 @@ class _ScannerScreenState extends State<ScannerScreen>
                       ],
                     ),
                   ),
-                  if (_allFolders.isNotEmpty) const Divider(height: 1),
+                  if (_allFolders.isNotEmpty) const Divider(height: 1, color: kBorder),
                   ..._allFolders.map(
                     (f) => SimpleDialogOption(
                       onPressed: () => Navigator.pop(ctx, f),
                       child: Row(
                         children: [
-                          const Icon(Icons.folder_outlined),
+                          const Icon(Icons.folder_outlined, color: Color(0xFF888888)),
                           const SizedBox(width: 10),
-                          Expanded(child: Text(f.name)),
+                          Expanded(child: Text(f.name,
+                              style: const TextStyle(color: Colors.white))),
                         ],
                       ),
                     ),
@@ -884,6 +950,7 @@ class _ScannerScreenState extends State<ScannerScreen>
                 ],
               ),
             );
+
 
             if (result == 'none') {
               setState(() => _selectedFolder = null);
@@ -895,9 +962,9 @@ class _ScannerScreenState extends State<ScannerScreen>
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF7F6),
+        color: kSurface2,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE6D2CF)),
+        border: Border.all(color: kBorder),
       ),
       child: Row(
         children: [
@@ -905,7 +972,7 @@ class _ScannerScreenState extends State<ScannerScreen>
             _selectedFolder == null
                 ? Icons.folder_off_outlined
                 : Icons.folder_outlined,
-            color: const Color(0xFF5D4A47),
+            color: const Color(0xFF888888),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -919,25 +986,26 @@ class _ScannerScreenState extends State<ScannerScreen>
                 fontWeight: FontWeight.w600,
                 color: _selectedFolder == null
                     ? Colors.grey
-                    : const Color(0xFF2E2220),
+                    : Colors.white,
               ),
             ),
           ),
           const Icon(
             Icons.keyboard_arrow_down_rounded,
-            color: Color(0xFF5D4A47),
+            color: Color(0xFF888888),
           ),
         ],
       ),
     ),
   );
 
+
   Widget _quantitySelector() => Container(
     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
     decoration: BoxDecoration(
-      color: const Color(0xFFFFF7F6),
+      color: kSurface2,
       borderRadius: BorderRadius.circular(18),
-      border: Border.all(color: const Color(0xFFE6D2CF)),
+      border: Border.all(color: kBorder),
     ),
     child: Row(
       children: [
@@ -946,7 +1014,7 @@ class _ScannerScreenState extends State<ScannerScreen>
           style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w700,
-            color: Color(0xFF2E2220),
+            color: Colors.white,
           ),
         ),
         const Spacer(),
@@ -962,7 +1030,7 @@ class _ScannerScreenState extends State<ScannerScreen>
               style: const TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w700,
-                color: Color(0xFF2E2220),
+                color: Colors.white,
               ),
             ),
           ),
@@ -975,6 +1043,7 @@ class _ScannerScreenState extends State<ScannerScreen>
     ),
   );
 
+
   Widget _roundQtyButton({
     required IconData icon,
     required VoidCallback? onTap,
@@ -986,18 +1055,20 @@ class _ScannerScreenState extends State<ScannerScreen>
       height: 40,
       decoration: BoxDecoration(
         color: onTap != null
-            ? const Color(0xFF2B1E1C)
-            : const Color(0xFFD7CAC8),
+            ? kGold
+            : const Color(0xFF333333),
         borderRadius: BorderRadius.circular(14),
       ),
-      child: Icon(icon, color: Colors.white, size: 20),
+      child: Icon(icon, color: onTap != null ? kBlack : Colors.white54, size: 20),
     ),
   );
 }
 
+
 class _CameraPreviewFit extends StatelessWidget {
   const _CameraPreviewFit({required this.controller});
   final CameraController controller;
+
 
   @override
   Widget build(BuildContext context) {
@@ -1026,10 +1097,12 @@ class _CameraPreviewFit extends StatelessWidget {
   }
 }
 
+
 class _ErrorView extends StatelessWidget {
   const _ErrorView({required this.message, required this.onRetry});
   final String message;
   final VoidCallback onRetry;
+
 
   @override
   Widget build(BuildContext context) => Center(
@@ -1048,6 +1121,10 @@ class _ErrorView extends StatelessWidget {
           const SizedBox(height: 20),
           FilledButton.icon(
             onPressed: onRetry,
+            style: FilledButton.styleFrom(
+              backgroundColor: kGold,
+              foregroundColor: kBlack,
+            ),
             icon: const Icon(Icons.refresh),
             label: const Text('Reintentar'),
           ),

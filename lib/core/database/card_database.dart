@@ -150,6 +150,26 @@ class CardDatabase {
   static final CardDatabase instance = CardDatabase._();
 
   static Database? _db;
+  static int? _currentUserId;
+
+  /// Llama esto después del login con el ID del usuario.
+  /// Si el usuario cambia, cierra la BD anterior y abre la nueva.
+  static Future<void> initForUser(int userId) async {
+    if (_currentUserId == userId && _db != null) return;
+    // Cierra la BD anterior si existe
+    await _db?.close();
+    _db = null;
+    collectionFolderId = null;
+    _currentUserId = userId;
+  }
+
+  /// Cierra la BD al hacer logout.
+  static Future<void> closeForLogout() async {
+    await _db?.close();
+    _db = null;
+    _currentUserId = null;
+    collectionFolderId = null;
+  }
 
   Future<Database> get database async {
     _db ??= await _openDatabase();
@@ -158,7 +178,11 @@ class CardDatabase {
 
   Future<Database> _openDatabase() async {
     final dbPath = await getDatabasesPath();
-    final fullPath = p.join(dbPath, 'one_piece_cards.db');
+    // BD separada por usuario: one_piece_cards_user_1.db
+    final fileName = _currentUserId != null
+        ? 'one_piece_cards_user_$_currentUserId.db'
+        : 'one_piece_cards.db';
+    final fullPath = p.join(dbPath, fileName);
 
     return openDatabase(
       fullPath,
@@ -437,13 +461,21 @@ class CardDatabase {
     );
   }
 
+  /// Elimina TODA la entrada de una carta en una carpeta (sin importar la cantidad)
+  /// y si no queda en ninguna otra carpeta, borra también de scanned_cards.
   Future<void> removeCardFromFolderAndCleanup({
     required int folderId,
     required int cardId,
     required String imagePath,
   }) async {
-    await removeCardFromFolder(folderId: folderId, cardId: cardId);
     final db = await database;
+    // Elimina la fila completa (no de 1 en 1)
+    await db.delete(
+      'folder_cards',
+      where: 'folder_id = ? AND card_id = ?',
+      whereArgs: [folderId, cardId],
+    );
+    // Si ya no está en ninguna carpeta, elimina el registro base
     final remaining = await db.query(
       'folder_cards',
       where: 'card_id = ?',
