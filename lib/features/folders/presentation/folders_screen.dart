@@ -345,16 +345,26 @@ class _FolderTile extends StatelessWidget {
     );
   }
 
-  void _shareFolder(BuildContext context) {
+  Future<void> _shareFolder(BuildContext context) async {
     if (!folder.isPublic) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('La carpeta debe ser pública para compartir')),
       );
       return;
     }
-    final link = 'opcardscanner://folder/${folder.id}';
+    // Obtiene el share_token del servidor
+    final token = await SyncService().getShareToken(folder.id!);
+    if (token == null || token.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo obtener el link. Intenta de nuevo.')),
+        );
+      }
+      return;
+    }
+    final link = 'opcardscanner://folder/$token';
     Share.share(
-      'Mira mi colección One Piece TCG:\n$link',
+      'Mira mi colección One Piece TCG 🏴‍☠️\n$link',
       subject: 'Carpeta: ${folder.name}',
     );
   }

@@ -27,7 +27,7 @@ class _SearchScreenState extends State<SearchScreen> {
   String? _filterColor;  // Red, Blue, Green, Yellow, Purple, Black
   String? _filterSet;    // OP01, OP02 ...
 
-  static const _baseUrl = 'http://192.168.1.114:8000';
+  static const _baseUrl = 'https://one-piece-tcg-server-production.up.railway.app';
 
   static const _types  = ['Leader', 'Character', 'Event', 'Stage'];
   static const _colors = ['Red', 'Blue', 'Green', 'Yellow', 'Purple', 'Black'];
